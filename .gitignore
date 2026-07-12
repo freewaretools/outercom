@@ -1,0 +1,5 @@
+node_modules
+*.log
+.DS_Store
+*.tsbuildinfo
+# dist is intentionally committed so git-URL installs work without a build step.

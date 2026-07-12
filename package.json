@@ -1,0 +1,48 @@
+{
+  "name": "@freewaretools/outercom",
+  "version": "0.4.0",
+  "description": "Self-hosted live-chat widget that hands off to Telegram (Slack/Discord pluggable), with an optional Claude or local-LLM first-line. Pre-chat capture, topic-per-customer, transcript email, notification sounds.",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "default": "./dist/react.js"
+    },
+    "./next": {
+      "types": "./dist/next.d.ts",
+      "default": "./dist/next.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "clean": "rm -rf dist"
+  },
+  "//install-notes": "Published to npm as @freewaretools/outercom; also git-URL installable (dist/ is committed, so no build step on install). NO prepack/prepare/postinstall scripts on purpose: pnpm blocks build scripts on git-URL installs (ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED). No peerDependencies — react/@anthropic-ai/sdk are provided by the host (the SDK is lazy-loaded); pnpm fails to snapshot a git dep that declares peers. To release: `npm run build`, commit dist/, tag, then `npm publish`.",
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^0.102.0",
+    "@types/react": "^19",
+    "react": "^19",
+    "typescript": "^5.7.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/freewaretools/outercom.git"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
