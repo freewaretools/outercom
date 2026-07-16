@@ -113,6 +113,9 @@ export declare class ChatEngine {
      * Relay text into the session's transport thread, healing the thread if it has
      * been deleted upstream. Best-effort throughout: a transport that is down must
      * never break the visitor's conversation.
+     *
+     * Pass `revive: false` for terminal notices (the chat is ending) — resurrecting
+     * a deleted topic just to announce a chat nobody saw is noise, not recovery.
      */
     private mirror;
     /**

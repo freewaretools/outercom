@@ -5,6 +5,43 @@ All notable changes to `@freewaretools/outercom`.
 This project adheres to [Semantic Versioning](https://semver.org/). While the
 major version is `0`, breaking changes ship in minor releases.
 
+## [0.5.1] — 2026-07-16
+
+Fixes four defects an adversarial review found in 0.5.0, each reproduced by a
+probe and now covered by a regression test. No API change.
+
+### Fixed
+
+- **The AI could talk over a live human.** `maybeResumeAi`'s "has an agent
+  replied?" guard was **session**-scoped, but agents reply into a **thread**, and
+  threads are deliberately shared across sessions (`getThreadByEmail` reuse). An
+  inbound reply is recorded only against the session that owns the thread, so any
+  *other* live session on that thread saw zero agent messages and would resume —
+  posting AI replies into a topic a human was actively working. Resuming now
+  additionally requires that the session still owns its thread.
+- **`abandonSession` resurrected deleted topics.** Its departure notice relayed
+  through `mirror()`, so a deleted topic was recreated, told "this chat continues
+  here" (it doesn't — the next statements close it), then immediately closed. In
+  the very scenario 0.5.0 targets (someone tidying up topics), every abandoned
+  session spawned a fresh topic. Terminal notices now use `mirror(..., {revive:
+  false})`.
+- **The `startSession` intro was the one send that couldn't heal.** It called
+  `transport.sendMessage` directly and discarded the `SendResult`, so a
+  `threadGone` there was dropped and the session was persisted onto the dead
+  thread. Harmless for `TelegramTransport` (whose `reopenTopic` catches a deleted
+  topic first, leaving only a narrow race), but systematic for any transport that
+  returns `true` from `reopenTopic` because it has no reopen concept — which the
+  interface explicitly permits. It now routes through `mirror()`.
+- **A synchronous storage throw permanently disabled revival.** The in-flight
+  dedupe entry was installed *after* the async IIFE was invoked, and an IIFE runs
+  synchronously up to its first `await`. A storage adapter throwing synchronously
+  (an ordinary guard-clause pattern) therefore ran `finally`'s `delete` before the
+  `set`, leaving a resolved-`null` promise cached forever — so every later revive
+  for that session returned `null` and dropped the message, resurrecting the
+  original bug. The task is now deferred by a microtask so the entry is installed
+  first. Latent for both Prisma-backed consumers (async, so they reject rather
+  than throw).
+
 ## [0.5.0] — 2026-07-16
 
 ### Fixed

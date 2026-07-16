@@ -164,7 +164,10 @@ export class ChatEngine {
             (this.aiEnabled
               ? `\nThe AI assistant is handling this. Reply in this topic to take over.`
               : `\nReply in this topic to respond.`)
-          await this.transport.sendMessage(threadId, intro)
+          // Via mirror(), not the transport directly, so a thread deleted
+          // between reopenTopic and here still heals — otherwise the intro is
+          // the one send that can silently vanish onto a dead thread.
+          await this.mirror(session, intro)
         }
         // The pre-chat question becomes the visitor's opening message.
         if (visitor.topic) {
@@ -311,7 +314,9 @@ export class ChatEngine {
     if (!session || session.status === "closed") return
     await this.mirror(
       session,
-      "🚪 <b>The visitor left / reset the chat.</b> Replies here won't reach them."
+      "🚪 <b>The visitor left / reset the chat.</b> Replies here won't reach them.",
+      // The chat is over; if the topic is already gone there is nothing to save.
+      { revive: false }
     )
     await this.storage.updateSession(sessionId, { status: "closed" })
     if (session.threadId != null) {
@@ -362,6 +367,16 @@ export class ChatEngine {
     if (session.status !== "live") return
     if (!this.aiEnabled || !this.ai || this.aiResumeAfterMs <= 0) return
 
+    // One thread can serve several sessions (topics are reused per email), but
+    // an inbound agent reply is recorded against only the session that
+    // currently owns the thread. A non-owner therefore can't see that a human
+    // is already in the topic — so it must never resume, or the AI would talk
+    // over that human. Only the owner may speak for the thread.
+    if (session.threadId != null) {
+      const owner = await this.storage.getSessionByThread(session.threadId)
+      if (owner != null && owner.id !== session.id) return
+    }
+
     const history = await this.storage.getMessages(session.id)
     // If an agent has ever spoken, this chat belongs to them — never talk over
     // a human, however long they take to reply.
@@ -405,12 +420,20 @@ export class ChatEngine {
    * Relay text into the session's transport thread, healing the thread if it has
    * been deleted upstream. Best-effort throughout: a transport that is down must
    * never break the visitor's conversation.
+   *
+   * Pass `revive: false` for terminal notices (the chat is ending) — resurrecting
+   * a deleted topic just to announce a chat nobody saw is noise, not recovery.
    */
-  private async mirror(session: ChatSession, html: string): Promise<void> {
+  private async mirror(
+    session: ChatSession,
+    html: string,
+    opts?: { revive?: boolean }
+  ): Promise<void> {
     if (session.threadId == null) return
     // `res?` guards transports that predate SendResult and still return void.
     const res = await this.transport.sendMessage(session.threadId, html)
     if (!res?.threadGone) return
+    if (opts?.revive === false) return
 
     // The topic was deleted out from under us. Without this the session is
     // pinned to a dead thread forever and every relay silently vanishes.
@@ -430,7 +453,12 @@ export class ChatEngine {
     const existing = this.reviving.get(session.id)
     if (existing) return existing
 
-    const task = (async (): Promise<string | null> => {
+    // Deferred via a microtask so the map entry below is installed BEFORE the
+    // body runs. Invoking an async IIFE directly runs it synchronously up to
+    // its first await — a storage adapter that throws synchronously would then
+    // hit `finally` before `set`, leaving a resolved-null promise cached
+    // forever and permanently disabling revival for this session.
+    const task = Promise.resolve().then(async (): Promise<string | null> => {
       try {
         // A concurrent request may have already healed this session and cleared
         // the in-flight entry; adopt its thread instead of minting another.
@@ -461,7 +489,7 @@ export class ChatEngine {
       } finally {
         this.reviving.delete(session.id)
       }
-    })()
+    })
 
     this.reviving.set(session.id, task)
     return task
