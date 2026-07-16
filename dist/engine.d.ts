@@ -12,6 +12,16 @@ export interface ChatEngineOptions {
     /** Message shown to the visitor when a chat is escalated to a human. */
     escalationMessage?: string;
     /**
+     * How long an escalated chat may sit with no agent reply before the AI picks
+     * it back up, in ms. Guards against a visitor being stranded in silence when
+     * nobody is watching the transport. Default: 10 minutes. Set `0` to disable
+     * (an escalation then hands off permanently, as before).
+     *
+     * Only ever fires when *no* agent has replied in the session, so it can't cut
+     * in on a human who is simply typing slowly.
+     */
+    aiResumeAfterMs?: number;
+    /**
      * Optional hook to email/send a transcript. Called when a chat is closed and
      * when the visitor requests a copy. Host-provided (e.g. render + Resend) so
      * chatkit stays mailer-agnostic.
@@ -35,6 +45,9 @@ export declare class ChatEngine {
     private readonly aiEnabled;
     private readonly topicName;
     private readonly escalationMessage;
+    private readonly aiResumeAfterMs;
+    /** In-flight thread revivals, keyed by session id — see {@link reviveThread}. */
+    private readonly reviving;
     private readonly sendTranscript?;
     private readonly sendReplyNotification?;
     constructor(opts: ChatEngineOptions);
@@ -87,8 +100,30 @@ export declare class ChatEngine {
     abandonSession(sessionId: string): Promise<void>;
     closeSession(sessionId: string): Promise<void>;
     private requireSession;
+    /**
+     * Hand an escalated chat back to the AI when no human ever picked it up.
+     * Escalation is otherwise a one-way door: if the transport is misconfigured or
+     * nobody is watching, the visitor sits in silence indefinitely.
+     *
+     * Mutates `session` in place so the caller's AI branch sees the new status.
+     */
+    private maybeResumeAi;
     private append;
+    /**
+     * Relay text into the session's transport thread, healing the thread if it has
+     * been deleted upstream. Best-effort throughout: a transport that is down must
+     * never break the visitor's conversation.
+     */
     private mirror;
+    /**
+     * Replace a deleted transport thread with a fresh one and persist it, so the
+     * session (and, via `getThreadByEmail`, the visitor's next session) stops
+     * pointing at the dead id.
+     *
+     * Concurrent messages share one in-flight revival — otherwise a visitor firing
+     * off three messages at once would mint three topics.
+     */
+    private reviveThread;
 }
 export declare class ChatSessionNotFound extends Error {
     readonly sessionId: string;

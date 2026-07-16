@@ -1,6 +1,6 @@
 {
   "name": "@freewaretools/outercom",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Self-hosted live-chat widget that hands off to Telegram (Slack/Discord pluggable), with an optional Claude or local-LLM first-line. Pre-chat capture, topic-per-customer, transcript email, notification sounds.",
   "license": "MIT",
   "publishConfig": {
@@ -25,17 +25,21 @@
   "files": [
     "dist",
     "src",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "test": "node --import tsx --test 'test/*.test.ts'",
     "clean": "rm -rf dist"
   },
+  "//test-notes": "Tests use Node's built-in runner against src/, with tsx to load TypeScript. tsx (dev-only) rather than Node's native type-stripping because strip-only mode rejects parameter properties, which the source uses. Tests live in test/ and are outside tsconfig's `include`, so they never reach dist/.",
   "//install-notes": "Published to npm as @freewaretools/outercom; also git-URL installable (dist/ is committed, so no build step on install). NO prepack/prepare/postinstall scripts on purpose: pnpm blocks build scripts on git-URL installs (ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED). No peerDependencies — react/@anthropic-ai/sdk are provided by the host (the SDK is lazy-loaded); pnpm fails to snapshot a git dep that declares peers. To release: `npm run build`, commit dist/, tag, then `npm publish`.",
   "devDependencies": {
     "@anthropic-ai/sdk": "^0.102.0",
     "@types/react": "^19",
     "react": "^19",
+    "tsx": "^4.23.1",
     "typescript": "^5.7.0"
   },
   "repository": {

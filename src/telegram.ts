@@ -1,5 +1,29 @@
-import type { ChatTransport } from "./transport"
+import type { ChatTransport, SendResult } from "./transport"
 import type { ParsedAgentReply } from "./types"
+
+/** A non-ok response from the Bot API, carrying Telegram's own `description`. */
+export class TelegramApiError extends Error {
+  constructor(
+    readonly method: string,
+    readonly description: string,
+    readonly status: number
+  ) {
+    super(`Telegram ${method} failed: ${description || status}`)
+    this.name = "TelegramApiError"
+  }
+}
+
+/**
+ * Does this error mean the topic itself is gone (someone deleted it)?
+ *
+ * Deliberately narrow. `TOPIC_NOT_MODIFIED` (already open), `chat not found`
+ * (wrong group id) and auth errors all leave the topic intact — treating those
+ * as "gone" would spawn a duplicate topic on every transient hiccup.
+ */
+export function isThreadGone(err: unknown): boolean {
+  if (!(err instanceof TelegramApiError)) return false
+  return /message thread not found|TOPIC_DELETED/i.test(err.description)
+}
 
 export interface TelegramConfig {
   /** Bot token from @BotFather (use a DEDICATED bot for chat, not your ops bot). */
@@ -41,9 +65,7 @@ export class TelegramTransport implements ChatTransport {
       description?: string
     }
     if (!data.ok) {
-      throw new Error(
-        `Telegram ${method} failed: ${data.description ?? res.status}`
-      )
+      throw new TelegramApiError(method, data.description ?? "", res.status)
     }
     return data.result as T
   }
@@ -59,7 +81,7 @@ export class TelegramTransport implements ChatTransport {
   }
 
   /** Post a message into a topic. Best-effort: never throws to the caller. */
-  async sendMessage(threadId: string, text: string): Promise<void> {
+  async sendMessage(threadId: string, text: string): Promise<SendResult> {
     try {
       await this.call("sendMessage", {
         message_thread_id: Number(threadId),
@@ -67,8 +89,13 @@ export class TelegramTransport implements ChatTransport {
         parse_mode: "HTML",
         disable_web_page_preview: true,
       })
+      return { ok: true }
     } catch (err) {
+      // A deleted topic isn't an error worth logging here — the engine recreates
+      // the thread and says so. Everything else is a genuine failure.
+      if (isThreadGone(err)) return { ok: false, threadGone: true }
       console.error("[chatkit] telegram sendMessage failed:", err)
+      return { ok: false }
     }
   }
 
@@ -81,12 +108,19 @@ export class TelegramTransport implements ChatTransport {
     }
   }
 
-  /** Reopen a closed topic (so a returning visitor reuses the same thread). */
-  async reopenTopic(threadId: string): Promise<void> {
+  /**
+   * Reopen a closed topic (so a returning visitor reuses the same thread).
+   * Returns false only if the topic has been deleted, so the caller knows to
+   * create a new one instead of writing into a thread that no longer exists.
+   */
+  async reopenTopic(threadId: string): Promise<boolean> {
     try {
       await this.call("reopenForumTopic", { message_thread_id: Number(threadId) })
-    } catch {
-      // Already open, or topic gone — non-fatal.
+      return true
+    } catch (err) {
+      // Already open (TOPIC_NOT_MODIFIED) and transient errors both mean the
+      // topic is still there; only a deleted one warrants a replacement.
+      return !isThreadGone(err)
     }
   }
 

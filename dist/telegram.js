@@ -1,3 +1,25 @@
+/** A non-ok response from the Bot API, carrying Telegram's own `description`. */
+export class TelegramApiError extends Error {
+    constructor(method, description, status) {
+        super(`Telegram ${method} failed: ${description || status}`);
+        this.method = method;
+        this.description = description;
+        this.status = status;
+        this.name = "TelegramApiError";
+    }
+}
+/**
+ * Does this error mean the topic itself is gone (someone deleted it)?
+ *
+ * Deliberately narrow. `TOPIC_NOT_MODIFIED` (already open), `chat not found`
+ * (wrong group id) and auth errors all leave the topic intact — treating those
+ * as "gone" would spawn a duplicate topic on every transient hiccup.
+ */
+export function isThreadGone(err) {
+    if (!(err instanceof TelegramApiError))
+        return false;
+    return /message thread not found|TOPIC_DELETED/i.test(err.description);
+}
 /**
  * Telegram transport. v1 of chatkit's "human handoff" surface — designed
  * behind a thin interface so other transports (Slack, Discord, email) can be
@@ -18,7 +40,7 @@ export class TelegramTransport {
         });
         const data = (await res.json().catch(() => ({})));
         if (!data.ok) {
-            throw new Error(`Telegram ${method} failed: ${data.description ?? res.status}`);
+            throw new TelegramApiError(method, data.description ?? "", res.status);
         }
         return data.result;
     }
@@ -37,9 +59,15 @@ export class TelegramTransport {
                 parse_mode: "HTML",
                 disable_web_page_preview: true,
             });
+            return { ok: true };
         }
         catch (err) {
+            // A deleted topic isn't an error worth logging here — the engine recreates
+            // the thread and says so. Everything else is a genuine failure.
+            if (isThreadGone(err))
+                return { ok: false, threadGone: true };
             console.error("[chatkit] telegram sendMessage failed:", err);
+            return { ok: false };
         }
     }
     /** Close a topic when a conversation ends (keeps the group tidy). */
@@ -51,13 +79,20 @@ export class TelegramTransport {
             console.error("[chatkit] telegram closeForumTopic failed:", err);
         }
     }
-    /** Reopen a closed topic (so a returning visitor reuses the same thread). */
+    /**
+     * Reopen a closed topic (so a returning visitor reuses the same thread).
+     * Returns false only if the topic has been deleted, so the caller knows to
+     * create a new one instead of writing into a thread that no longer exists.
+     */
     async reopenTopic(threadId) {
         try {
             await this.call("reopenForumTopic", { message_thread_id: Number(threadId) });
+            return true;
         }
-        catch {
-            // Already open, or topic gone — non-fatal.
+        catch (err) {
+            // Already open (TOPIC_NOT_MODIFIED) and transient errors both mean the
+            // topic is still there; only a deleted one warrants a replacement.
+            return !isThreadGone(err);
         }
     }
     /**

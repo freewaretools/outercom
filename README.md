@@ -88,8 +88,9 @@ import { ChatWidget } from "@freewaretools/outercom/react"
 
 ## Features
 
-- **Topic-per-customer** — reused (and reopened) by email, so one thread per person, not a pile of duplicates.
+- **Topic-per-customer** — reused (and reopened) by email, so one thread per person, not a pile of duplicates. **Self-healing**: if someone deletes the topic, the next message recreates it and carries on, instead of relaying into the void.
 - **AI first-line** — Claude (`AnthropicProvider`, default Haiku 4.5) or any OpenAI-compatible local model (`LocalProvider`: Ollama / LM Studio / llama.cpp / vLLM). Same persona + `{reply, escalate, reason}` contract, defensive JSON parsing with plain-text fallback.
+- **No dead ends** — an escalation that no agent answers within `aiResumeAfterMs` (default 10 min) falls back to the AI, so a visitor is never left in silence. Never fires once a human has replied.
 - **Agent names** — the replying staff member's name is shown on their bubbles.
 - **Transcript email** — auto-sent on close, plus an "Email me a copy" button (`renderTranscript` + a host `sendTranscript` hook).
 - **Notification sounds** — soft Web-Audio "boop" on incoming replies, with mute toggle + unread dot on the launcher.
@@ -130,12 +131,21 @@ Implement `ChatTransport` and pass it to the engine — no engine changes:
 ```ts
 class SlackTransport implements ChatTransport {
   createTopic(name) { /* post a parent message → return its thread_ts */ }
+  // → SendResult. Best-effort: report failure, don't throw. Set `threadGone`
+  //   when the thread no longer exists and the engine should mint a new one.
   sendMessage(threadId, text) { /* chat.postMessage thread_ts=threadId */ }
   closeTopic(threadId) { /* archive / post a "closed" note */ }
-  reopenTopic(threadId) { /* optional */ }
+  // → boolean. false ONLY when the thread is gone; true if reopened, already
+  //   open, or the concept doesn't apply. Returning false on a transient error
+  //   would spawn duplicate threads.
+  reopenTopic(threadId) { /* optional → return true */ }
   parseUpdate(evt) { /* Events API message in a thread → { threadId, text } */ }
 }
 ```
+
+A transport that can't distinguish "thread deleted" from other failures should
+just leave `threadGone` unset — the engine then behaves as it did before
+(best-effort send, no recreate).
 
 ## Notes
 
@@ -144,9 +154,15 @@ class SlackTransport implements ChatTransport {
 - **Rate limiting / spam protection** on `/api/chat` is the host's responsibility.
 - The session id is an unguessable UUID held by the client; it grants access to that session only. For authenticated apps, derive the visitor server-side rather than trusting the client.
 
+## Tests
+
+`npm test` — Node's built-in runner over `test/*.test.ts`, loaded through `tsx`.
+Tests exercise `src/` directly and are outside tsconfig's `include`, so they
+never reach `dist/`.
+
 ## Releasing
 
-`dist/` is committed so git-URL installs need no build step. To cut a release: `npm run build`, commit `dist/`, tag (`git tag v0.x.0 && git push --tags`), then `npm publish`. Consumers use `npm i @freewaretools/outercom` or pin `github:freewaretools/outercom#v0.x.0`.
+`dist/` is committed so git-URL installs need no build step. To cut a release: `npm test`, `npm run build`, commit `dist/`, tag (`git tag v0.x.0 && git push --tags`), then `npm publish`. Consumers use `npm i @freewaretools/outercom` or pin `github:freewaretools/outercom#v0.x.0`.
 
 ---
 

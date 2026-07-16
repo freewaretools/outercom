@@ -19,6 +19,16 @@ export interface ChatEngineOptions {
   /** Message shown to the visitor when a chat is escalated to a human. */
   escalationMessage?: string
   /**
+   * How long an escalated chat may sit with no agent reply before the AI picks
+   * it back up, in ms. Guards against a visitor being stranded in silence when
+   * nobody is watching the transport. Default: 10 minutes. Set `0` to disable
+   * (an escalation then hands off permanently, as before).
+   *
+   * Only ever fires when *no* agent has replied in the session, so it can't cut
+   * in on a human who is simply typing slowly.
+   */
+  aiResumeAfterMs?: number
+  /**
    * Optional hook to email/send a transcript. Called when a chat is closed and
    * when the visitor requests a copy. Host-provided (e.g. render + Resend) so
    * chatkit stays mailer-agnostic.
@@ -37,6 +47,9 @@ export interface ChatEngineOptions {
 const DEFAULT_ESCALATION =
   "I've passed this to our team — someone will jump in here shortly. Feel free to add any extra detail in the meantime."
 
+/** Default window before an unanswered escalation falls back to the AI. */
+const DEFAULT_AI_RESUME_MS = 10 * 60_000
+
 /** Messages the client should render (everything except the visitor's own echoes). */
 const CLIENT_ROLES: ChatRole[] = ["ai", "agent", "system"]
 
@@ -52,6 +65,9 @@ export class ChatEngine {
   private readonly aiEnabled: boolean
   private readonly topicName: (v: ChatVisitor) => string
   private readonly escalationMessage: string
+  private readonly aiResumeAfterMs: number
+  /** In-flight thread revivals, keyed by session id — see {@link reviveThread}. */
+  private readonly reviving = new Map<string, Promise<string | null>>()
   private readonly sendTranscript?: (
     session: ChatSession,
     messages: ChatMessage[]
@@ -69,6 +85,7 @@ export class ChatEngine {
     this.topicName =
       opts.topicName ?? ((v) => `${v.name} · ${v.email}`)
     this.escalationMessage = opts.escalationMessage ?? DEFAULT_ESCALATION
+    this.aiResumeAfterMs = opts.aiResumeAfterMs ?? DEFAULT_AI_RESUME_MS
     this.sendTranscript = opts.sendTranscript
     this.sendReplyNotification = opts.sendReplyNotification
   }
@@ -99,10 +116,17 @@ export class ChatEngine {
 
     // Reuse one topic per customer email; reopen it if a prior chat closed it.
     let threadId = await this.storage.getThreadByEmail(visitor.email)
-    const reused = threadId !== null
-    if (threadId !== null) {
-      await this.transport.reopenTopic(threadId)
-    } else {
+    let reused = threadId !== null
+    // Only an explicit `false` means the topic is gone. A transport that predates
+    // the boolean return (or can't tell) yields undefined and is treated as
+    // alive — assuming otherwise would recreate a topic on every return visit.
+    if (threadId !== null && (await this.transport.reopenTopic(threadId)) === false) {
+      // The remembered topic has been deleted — fall through and mint a new one
+      // rather than stranding this chat on a dead thread.
+      threadId = null
+      reused = false
+    }
+    if (threadId === null) {
       try {
         threadId = await this.transport.createTopic(this.topicName(visitor))
       } catch (err) {
@@ -172,6 +196,8 @@ export class ChatEngine {
     await this.mirror(session, `💬 <b>${esc(session.visitor.name)}:</b> ${esc(clean)}`)
 
     const produced: ChatMessage[] = []
+
+    await this.maybeResumeAi(session)
 
     if (session.status === "ai" && this.aiEnabled && this.ai) {
       try {
@@ -325,6 +351,38 @@ export class ChatEngine {
     return s
   }
 
+  /**
+   * Hand an escalated chat back to the AI when no human ever picked it up.
+   * Escalation is otherwise a one-way door: if the transport is misconfigured or
+   * nobody is watching, the visitor sits in silence indefinitely.
+   *
+   * Mutates `session` in place so the caller's AI branch sees the new status.
+   */
+  private async maybeResumeAi(session: ChatSession): Promise<void> {
+    if (session.status !== "live") return
+    if (!this.aiEnabled || !this.ai || this.aiResumeAfterMs <= 0) return
+
+    const history = await this.storage.getMessages(session.id)
+    // If an agent has ever spoken, this chat belongs to them — never talk over
+    // a human, however long they take to reply.
+    if (history.some((m) => m.role === "agent")) return
+
+    // The escalation notice is the only `system` message a live session can
+    // have (close writes one too, but that sets status to `closed`), so its
+    // timestamp is when the handoff started.
+    const systems = history.filter((m) => m.role === "system")
+    if (systems.length === 0) return
+    const escalatedAt = systems[systems.length - 1].createdAt
+    if (Date.now() - escalatedAt < this.aiResumeAfterMs) return
+
+    await this.storage.updateSession(session.id, { status: "ai" })
+    session.status = "ai"
+    await this.mirror(
+      session,
+      "🤖 <b>No agent replied — the AI has picked this back up.</b>"
+    )
+  }
+
   private async append(
     session: ChatSession,
     role: ChatRole,
@@ -343,10 +401,70 @@ export class ChatEngine {
     return message
   }
 
+  /**
+   * Relay text into the session's transport thread, healing the thread if it has
+   * been deleted upstream. Best-effort throughout: a transport that is down must
+   * never break the visitor's conversation.
+   */
   private async mirror(session: ChatSession, html: string): Promise<void> {
-    if (session.threadId != null) {
-      await this.transport.sendMessage(session.threadId, html)
-    }
+    if (session.threadId == null) return
+    // `res?` guards transports that predate SendResult and still return void.
+    const res = await this.transport.sendMessage(session.threadId, html)
+    if (!res?.threadGone) return
+
+    // The topic was deleted out from under us. Without this the session is
+    // pinned to a dead thread forever and every relay silently vanishes.
+    const revived = await this.reviveThread(session)
+    if (revived != null) await this.transport.sendMessage(revived, html)
+  }
+
+  /**
+   * Replace a deleted transport thread with a fresh one and persist it, so the
+   * session (and, via `getThreadByEmail`, the visitor's next session) stops
+   * pointing at the dead id.
+   *
+   * Concurrent messages share one in-flight revival — otherwise a visitor firing
+   * off three messages at once would mint three topics.
+   */
+  private reviveThread(session: ChatSession): Promise<string | null> {
+    const existing = this.reviving.get(session.id)
+    if (existing) return existing
+
+    const task = (async (): Promise<string | null> => {
+      try {
+        // A concurrent request may have already healed this session and cleared
+        // the in-flight entry; adopt its thread instead of minting another.
+        const fresh = await this.storage.getSession(session.id)
+        if (fresh?.threadId != null && fresh.threadId !== session.threadId) {
+          session.threadId = fresh.threadId
+          return fresh.threadId
+        }
+
+        const threadId = await this.transport.createTopic(
+          this.topicName(session.visitor)
+        )
+        await this.storage.updateSession(session.id, { threadId })
+        session.threadId = threadId
+        console.warn(
+          "[chatkit] transport thread was gone — recreated as:",
+          threadId
+        )
+        await this.transport.sendMessage(
+          threadId,
+          "🔁 <b>Topic recreated</b> — the previous one was deleted, so this chat continues here.\n" +
+            `From: ${esc(session.visitor.name)} (${esc(session.visitor.email)})`
+        )
+        return threadId
+      } catch (err) {
+        console.error("[chatkit] could not recreate transport thread:", err)
+        return null
+      } finally {
+        this.reviving.delete(session.id)
+      }
+    })()
+
+    this.reviving.set(session.id, task)
+    return task
   }
 }
 
