@@ -5,6 +5,20 @@ All notable changes to `@freewaretools/outercom`.
 This project adheres to [Semantic Versioning](https://semver.org/). While the
 major version is `0`, breaking changes ship in minor releases.
 
+## [0.5.2] — 2026-07-28
+
+### Fixed
+
+- **A truncated AI reply could leak the raw JSON envelope to the visitor.**
+  Providers ask the model for a `{"reply", "escalate", "reason"}` envelope and
+  `parseAIReply` extracts `reply` from it. If the response was cut off (e.g. by
+  the token limit) before the JSON object closed, `extractJsonObject` correctly
+  found nothing, but the leaked-control-text safety net only checked for
+  `escalate`/`reason` — not `reply` — so the unclosed `{"reply": "..."` scaffold
+  fell through and was shown to the visitor verbatim instead of triggering a
+  clean escalation. `looksLikeControlLeak` now also matches a leaked `reply`
+  field.
+
 ## [0.5.1] — 2026-07-16
 
 Fixes four defects an adversarial review found in 0.5.0, each reproduced by a

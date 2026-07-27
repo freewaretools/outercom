@@ -103,9 +103,13 @@ export function parseAIReply(raw: string): AIReply {
   }
 }
 
-/** Heuristic: does the text look like leaked `escalate`/`reason` control fields? */
+/**
+ * Heuristic: does the text look like leaked `reply`/`escalate`/`reason` control
+ * fields? Covers truncated output too — e.g. a reply cut off mid-string by the
+ * token limit before the JSON object ever closes still opens with `{"reply":`.
+ */
 function looksLikeControlLeak(s: string): boolean {
-  return /(^|[\s"'{,])(escalate|reason)\s*["']?\s*[:=]/i.test(s)
+  return /(^|[\s"'{,])(reply|escalate|reason)\s*["']?\s*[:=]/i.test(s)
 }
 
 /** Pull the first balanced `{...}` block out of a string (handles stray prose/fences). */
