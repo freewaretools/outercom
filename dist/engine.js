@@ -1,6 +1,10 @@
 const DEFAULT_ESCALATION = "I've passed this to our team — someone will jump in here shortly. Feel free to add any extra detail in the meantime.";
 /** Default window before an unanswered escalation falls back to the AI. */
 const DEFAULT_AI_RESUME_MS = 10 * 60_000;
+/** Default recency for a chat to count as active — see `activeWithinMs`. */
+const DEFAULT_ACTIVE_WITHIN_MS = 10 * 60_000;
+/** Cap on the per-process "topic already unlocked" memo. */
+const MAX_ENSURED_THREADS = 10_000;
 /** Messages the client should render (everything except the visitor's own echoes). */
 const CLIENT_ROLES = ["ai", "agent", "system"];
 /**
@@ -10,6 +14,8 @@ const CLIENT_ROLES = ["ai", "agent", "system"];
  */
 export class ChatEngine {
     constructor(opts) {
+        /** Threads already unlocked in this process — see {@link ensureThreadOpen}. */
+        this.ensuredOpen = new Set();
         /** In-flight thread revivals, keyed by session id — see {@link reviveThread}. */
         this.reviving = new Map();
         this.storage = opts.storage;
@@ -20,6 +26,7 @@ export class ChatEngine {
             opts.topicName ?? ((v) => `${v.name} · ${v.email}`);
         this.escalationMessage = opts.escalationMessage ?? DEFAULT_ESCALATION;
         this.aiResumeAfterMs = opts.aiResumeAfterMs ?? DEFAULT_AI_RESUME_MS;
+        this.activeWithinMs = opts.activeWithinMs ?? DEFAULT_ACTIVE_WITHIN_MS;
         this.sendTranscript = opts.sendTranscript;
         this.sendReplyNotification = opts.sendReplyNotification;
     }
@@ -55,15 +62,19 @@ export class ChatEngine {
         // the boolean return (or can't tell) yields undefined and is treated as
         // alive — assuming otherwise would recreate a topic on every return visit.
         if (threadId !== null &&
-            (await this.transport.reopenTopic(threadId, this.topicName(visitor))) === false) {
+            (await this.transport.reopenTopic(threadId, (await this.threadTitle(threadId)) ?? this.topicName(visitor))) === false) {
             // The remembered topic has been deleted — fall through and mint a new one
             // rather than stranding this chat on a dead thread.
             threadId = null;
             reused = false;
         }
+        else if (threadId !== null) {
+            this.markEnsuredOpen(threadId);
+        }
         if (threadId === null) {
             try {
                 threadId = await this.transport.createTopic(this.topicName(visitor));
+                this.markEnsuredOpen(threadId); // brand new — can't be locked
             }
             catch (err) {
                 // If topic creation fails (misconfigured group/perms), the chat still
@@ -125,6 +136,7 @@ export class ChatEngine {
         if (!clean)
             return { session, newMessages: [] };
         await this.append(session, "visitor", clean);
+        await this.ensureThreadOpen(session);
         await this.mirror(session, `💬 <b>${esc(session.visitor.name)}:</b> ${esc(clean)}`);
         const produced = [];
         await this.maybeResumeAi(session);
@@ -235,9 +247,7 @@ export class ChatEngine {
         // The chat is over; if the topic is already gone there is nothing to save.
         { revive: false });
         await this.storage.updateSession(sessionId, { status: "closed" });
-        if (session.threadId != null) {
-            await this.transport.closeTopic(session.threadId, this.topicName(session.visitor));
-        }
+        await this.finishThread(session);
     }
     async closeSession(sessionId) {
         const session = await this.storage.getSession(sessionId);
@@ -258,11 +268,80 @@ export class ChatEngine {
                 console.error("[chatkit] transcript on close failed:", err);
             }
         }
-        if (session.threadId != null) {
-            await this.transport.closeTopic(session.threadId, this.topicName(session.visitor));
-        }
+        // Only on the transition to closed — re-closing an already-closed chat has
+        // nothing new to mark (and would otherwise re-mark a topic a newer chat has
+        // since reopened).
+        if (!alreadyClosed)
+            await this.finishThread(session);
     }
     // --- internals -----------------------------------------------------------
+    /** All sessions on a thread (empty when the storage adapter can't say). */
+    async threadSessions(threadId) {
+        try {
+            return (await this.storage.getThreadSessions?.(threadId)) ?? [];
+        }
+        catch (err) {
+            console.error("[chatkit] getThreadSessions failed:", err);
+            return [];
+        }
+    }
+    /**
+     * The topic's canonical title: that of the session that CREATED the thread.
+     * Titles are only ever set from this — never from whatever the current visitor
+     * typed — so returning under a different name (or someone else typing a known
+     * email) can't retitle a shared topic. `null` when the adapter can't say.
+     */
+    titleFrom(sessions) {
+        if (sessions.length === 0)
+            return null;
+        const owner = sessions.reduce((a, b) => (b.createdAt < a.createdAt ? b : a));
+        return this.topicName(owner.visitor);
+    }
+    async threadTitle(threadId) {
+        return this.titleFrom(await this.threadSessions(threadId));
+    }
+    /** Is this (other) chat still in use? Recently seen, and not closed. */
+    isActive(s) {
+        return (s.status !== "closed" &&
+            Date.now() - (s.lastSeenAt ?? s.createdAt) < this.activeWithinMs);
+    }
+    /**
+     * A chat ended: mark its thread finished — unless another chat on the same
+     * (shared) thread is still active, in which case the thread stays open and
+     * unmarked so agents don't skip a live conversation.
+     */
+    async finishThread(session) {
+        if (session.threadId == null)
+            return;
+        const sessions = await this.threadSessions(session.threadId);
+        if (sessions.some((s) => s.id !== session.id && this.isActive(s)))
+            return;
+        await this.transport.closeTopic(session.threadId, this.titleFrom(sessions) ?? this.topicName(session.visitor));
+    }
+    markEnsuredOpen(threadId) {
+        if (this.ensuredOpen.size >= MAX_ENSURED_THREADS)
+            this.ensuredOpen.clear();
+        this.ensuredOpen.add(threadId);
+    }
+    /**
+     * Unlock a thread once per process before relaying into it. A resumed chat
+     * never goes through {@link startSession}, so a topic locked by an older
+     * version (or by hand) would otherwise stay read-only to non-admin agents.
+     * No name is passed: this only unlocks, it never retitles.
+     */
+    async ensureThreadOpen(session) {
+        const threadId = session.threadId;
+        if (threadId == null || this.ensuredOpen.has(threadId))
+            return;
+        this.markEnsuredOpen(threadId);
+        try {
+            // `false` (deleted) is left to mirror(), which revives the thread.
+            await this.transport.reopenTopic(threadId);
+        }
+        catch (err) {
+            console.error("[chatkit] could not unlock topic:", err);
+        }
+    }
     async requireSession(id) {
         const s = await this.storage.getSession(id);
         if (!s)

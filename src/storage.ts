@@ -19,6 +19,18 @@ export interface ChatStorage {
    * each time they start a chat.
    */
   getThreadByEmail(email: string): Promise<string | null>
+  /**
+   * Every session that has used a transport thread, any status, any order.
+   *
+   * Optional, and no schema change is needed (a plain `WHERE thread_id = ?`).
+   * Threads are shared across a visitor's chats, so with this the engine can
+   * (a) keep the topic title stable — it is always the title of the session that
+   * CREATED the thread, never whatever a later visitor typed — and (b) leave a
+   * thread unmarked while another chat on it is still active. Without it the
+   * engine falls back to the current session's title and marks the thread as soon
+   * as any one chat ends.
+   */
+  getThreadSessions?(threadId: string): Promise<ChatSession[]>
   updateSession(id: string, patch: Partial<ChatSession>): Promise<void>
 
   /**
@@ -72,6 +84,14 @@ export class InMemoryStorage implements ChatStorage {
       }
     }
     return latest?.threadId ?? null
+  }
+
+  async getThreadSessions(threadId: string): Promise<ChatSession[]> {
+    const out: ChatSession[] = []
+    for (const s of this.sessions.values()) {
+      if (s.threadId === threadId) out.push({ ...s })
+    }
+    return out
   }
 
   async updateSession(id: string, patch: Partial<ChatSession>): Promise<void> {

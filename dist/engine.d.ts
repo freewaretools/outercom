@@ -22,6 +22,14 @@ export interface ChatEngineOptions {
      */
     aiResumeAfterMs?: number;
     /**
+     * How recently a chat's visitor must have been seen (polled) for the chat to
+     * count as still active when deciding whether ending one chat should mark the
+     * shared topic finished. Chats are often left open in a tab, never closed, so
+     * "not closed" alone would keep a topic looking active forever. Default: 10
+     * minutes.
+     */
+    activeWithinMs?: number;
+    /**
      * Optional hook to email/send a transcript. Called when a chat is closed and
      * when the visitor requests a copy. Host-provided (e.g. render + Resend) so
      * chatkit stays mailer-agnostic.
@@ -46,6 +54,9 @@ export declare class ChatEngine {
     private readonly topicName;
     private readonly escalationMessage;
     private readonly aiResumeAfterMs;
+    private readonly activeWithinMs;
+    /** Threads already unlocked in this process — see {@link ensureThreadOpen}. */
+    private readonly ensuredOpen;
     /** In-flight thread revivals, keyed by session id — see {@link reviveThread}. */
     private readonly reviving;
     private readonly sendTranscript?;
@@ -99,6 +110,32 @@ export declare class ChatEngine {
      */
     abandonSession(sessionId: string): Promise<void>;
     closeSession(sessionId: string): Promise<void>;
+    /** All sessions on a thread (empty when the storage adapter can't say). */
+    private threadSessions;
+    /**
+     * The topic's canonical title: that of the session that CREATED the thread.
+     * Titles are only ever set from this — never from whatever the current visitor
+     * typed — so returning under a different name (or someone else typing a known
+     * email) can't retitle a shared topic. `null` when the adapter can't say.
+     */
+    private titleFrom;
+    private threadTitle;
+    /** Is this (other) chat still in use? Recently seen, and not closed. */
+    private isActive;
+    /**
+     * A chat ended: mark its thread finished — unless another chat on the same
+     * (shared) thread is still active, in which case the thread stays open and
+     * unmarked so agents don't skip a live conversation.
+     */
+    private finishThread;
+    private markEnsuredOpen;
+    /**
+     * Unlock a thread once per process before relaying into it. A resumed chat
+     * never goes through {@link startSession}, so a topic locked by an older
+     * version (or by hand) would otherwise stay read-only to non-admin agents.
+     * No name is passed: this only unlocks, it never retitles.
+     */
+    private ensureThreadOpen;
     private requireSession;
     /**
      * Hand an escalated chat back to the AI when no human ever picked it up.

@@ -5,6 +5,57 @@ All notable changes to `@freewaretools/outercom`.
 This project adheres to [Semantic Versioning](https://semver.org/). While the
 major version is `0`, breaking changes ship in minor releases.
 
+## [0.6.1] — 2026-09-22
+
+Fixes found in an adversarial review of 0.6.0's rename-instead-of-close change.
+
+### Fixed
+
+- **A returning visitor could retitle the shared topic.** Topics are shared per
+  email, but reopen/close rebuilt the title from whatever name the *current*
+  visitor typed — so a customer typing a different name, or anyone typing a
+  known customer's email, renamed that customer's topic. The title is now always
+  the one the topic was **created** with (the earliest session on the thread).
+- **Ending one chat marked a topic done while another chat on it was live.** Two
+  tabs / devices on the same email share a thread; closing or abandoning one put
+  the ✅ on it, and nothing cleared it until the next new chat. The thread is now
+  left unmarked while another chat on it is active (not closed, and seen within
+  `activeWithinMs`, default 10 min — chats left open in an idle tab don't count).
+- **Topics locked by an older version stayed locked for resumed chats.** Only
+  `startSession` ever reopened a topic, so a resumed chat kept posting into a
+  locked topic that non-admin agents couldn't answer. The first visitor message
+  on a thread in each process now unlocks it (unlock only — it never retitles).
+- **Rights failures were invisible.** A `reopenForumTopic` error other than
+  "deleted" / `TOPIC_NOT_MODIFIED` (typically the bot lacking *Manage Topics*)
+  was swallowed. It is now logged.
+- **Re-closing an already-closed chat re-marked the topic** — a wasted API call,
+  and it could re-mark a topic a newer chat had since reopened.
+- **A topic name cut at 128 units could split an emoji** into a lone surrogate,
+  which Telegram rejects (leaving the topic unrenamed). Cuts now respect
+  surrogate pairs (`clipTopicName`).
+- `closeTopic` in rename mode with no name now logs a warning instead of doing
+  nothing silently.
+
+### Changed
+
+- `reopenTopic` runs `reopenForumTopic` and the rename **concurrently** (it sits
+  on the "Start chat" path), instead of one after the other.
+
+### Added
+
+- **`ChatStorage.getThreadSessions?(threadId)`** — optional; every session that
+  has used a thread, any status. Powers the stable title and the shared-thread
+  guard above. No schema change (`WHERE thread_id = ?`); `InMemoryStorage`
+  implements it. Adapters that don't keep the 0.6.0 behaviour (title from the
+  current visitor, mark on any close), so **implement it in your Prisma adapter**.
+- `ChatEngineOptions.activeWithinMs`.
+
+### Note
+
+Rename mode owns the topic title: a title an agent edits by hand is reset to the
+canonical one the next time the chat is closed or reopened. Use
+`closeStyle: "lock"` (all agents must then be group admins) if that matters.
+
 ## [0.6.0] — 2026-09-22
 
 ### Changed

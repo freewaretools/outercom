@@ -36,6 +36,14 @@ export class InMemoryStorage {
         }
         return latest?.threadId ?? null;
     }
+    async getThreadSessions(threadId) {
+        const out = [];
+        for (const s of this.sessions.values()) {
+            if (s.threadId === threadId)
+                out.push({ ...s });
+        }
+        return out;
+    }
     async updateSession(id, patch) {
         const existing = this.sessions.get(id);
         if (!existing)

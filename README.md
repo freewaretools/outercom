@@ -124,7 +124,9 @@ A local model keeps all chat data on your own infrastructure with no per-token c
    curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://yoursite/api/chat/telegram&secret_token=<SECRET>"
    ```
 
-Finished chats are marked by renaming the topic (`✅ Name · email`) rather than closing it, because Telegram makes closed topics read-only for non-admin members. Set `closeStyle: "lock"` on `TelegramTransport` if you'd rather lock them and your agents are all group admins.
+Finished chats are marked by renaming the topic (`✅ Name · email`) rather than closing it, because Telegram makes closed topics read-only for non-admin members. Set `closeStyle: "lock"` on `TelegramTransport` if you'd rather lock them and your agents are all group admins. In rename mode the package owns the topic title (always the one it was created with), so don't retitle topics by hand.
+
+Implement the optional `getThreadSessions(threadId)` on your `ChatStorage` (a plain `WHERE thread_id = ?`, no migration) — it keeps titles stable and stops one chat ending from marking a topic another live chat is still using.
 
 ## Extending: Slack (or anything)
 

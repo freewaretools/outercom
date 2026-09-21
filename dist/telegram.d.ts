@@ -15,6 +15,12 @@ export declare class TelegramApiError extends Error {
  * as "gone" would spawn a duplicate topic on every transient hiccup.
  */
 export declare function isThreadGone(err: unknown): boolean;
+/**
+ * Telegram caps topic names at 128 characters. Cut at 128 UTF-16 units, but never
+ * inside a surrogate pair — a lone surrogate serialises to invalid JSON text and
+ * Telegram rejects the whole call (leaving the topic unrenamed).
+ */
+export declare function clipTopicName(name: string): string;
 export interface TelegramConfig {
     /** Bot token from @BotFather (use a DEDICATED bot for chat, not your ops bot). */
     botToken: string;
@@ -66,9 +72,11 @@ export declare class TelegramTransport implements ChatTransport {
      * Returns false only if the topic has been deleted, so the caller knows to
      * create a new one instead of writing into a thread that no longer exists.
      *
-     * In `"rename"` mode this also calls `reopenForumTopic` first: topics locked by
-     * an older version (or by hand) are unlocked on the visitor's next return, so
-     * switching modes needs no migration.
+     * In `"rename"` mode this also unlocks (`reopenForumTopic`) alongside restoring
+     * the title: topics locked by an older version (or by hand) are unlocked on the
+     * next reopen, so switching modes needs no migration. The two calls are
+     * independent and run concurrently — this sits on the "Start chat" path.
+     * Without a `name` only the unlock happens (nothing is retitled).
      */
     reopenTopic(threadId: string, name?: string): Promise<boolean>;
     private editName;

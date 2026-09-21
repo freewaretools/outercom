@@ -126,3 +126,85 @@ test("reopenTopic ('lock'): only reopenForumTopic", async () => {
   assert.equal(await t.reopenTopic("7", "Ann"), true)
   assert.deepEqual(f.calls.map((c) => c.method), ["reopenForumTopic"])
 })
+
+// --- 0.6.1 ----------------------------------------------------------------
+
+import { mock } from "node:test"
+import { clipTopicName } from "../src/telegram.ts"
+
+test("reopenTopic: rename mode with no name only unlocks (never retitles)", async () => {
+  const { f, t } = make()
+  assert.equal(await t.reopenTopic("7"), true)
+  assert.deepEqual(f.calls.map((c) => c.method), ["reopenForumTopic"])
+})
+
+test("reopenTopic: both calls are issued even when the first fails", async () => {
+  const { f, t } = make({}, { reopenForumTopic: "Bad Request: not enough rights to manage topic" })
+  const err = mock.method(console, "error", () => {})
+  try {
+    assert.equal(await t.reopenTopic("7", "Ann"), true)
+    assert.deepEqual(f.calls.map((c) => c.method).sort(), ["editForumTopic", "reopenForumTopic"])
+    // A missing-rights failure must be visible, not swallowed.
+    assert.equal(err.mock.callCount(), 1)
+    assert.match(String(err.mock.calls[0].arguments.join(" ")), /reopenForumTopic/)
+  } finally {
+    err.mock.restore()
+  }
+})
+
+test("reopenTopic: TOPIC_NOT_MODIFIED is silent", async () => {
+  const { t } = make({}, {
+    reopenForumTopic: "Bad Request: TOPIC_NOT_MODIFIED",
+    editForumTopic: "Bad Request: TOPIC_NOT_MODIFIED",
+  })
+  const err = mock.method(console, "error", () => {})
+  try {
+    assert.equal(await t.reopenTopic("7", "Ann"), true)
+    assert.equal(err.mock.callCount(), 0)
+  } finally {
+    err.mock.restore()
+  }
+})
+
+test("reopenTopic: a deleted topic is reported and NOT logged as an error", async () => {
+  const { t } = make({}, { reopenForumTopic: "Bad Request: message thread not found" })
+  const err = mock.method(console, "error", () => {})
+  try {
+    assert.equal(await t.reopenTopic("7", "Ann"), false)
+    assert.equal(err.mock.callCount(), 0)
+  } finally {
+    err.mock.restore()
+  }
+})
+
+test("closeTopic (rename) without a name warns instead of failing silently", async () => {
+  const { f, t } = make()
+  const warn = mock.method(console, "warn", () => {})
+  try {
+    await t.closeTopic("7")
+    assert.equal(f.calls.length, 0)
+    assert.equal(warn.mock.callCount(), 1)
+  } finally {
+    warn.mock.restore()
+  }
+})
+
+test("clipTopicName: never splits a surrogate pair at the 128 boundary", () => {
+  assert.equal(clipTopicName("short"), "short")
+  const fits = "a".repeat(128)
+  assert.equal(clipTopicName(fits), fits)
+  // '😀' is two UTF-16 units; putting it across units 127/128 must drop it whole.
+  const s = "a".repeat(127) + "😀" + "tail"
+  const out = clipTopicName(s)
+  assert.equal(out, "a".repeat(127))
+  assert.ok(!/[\ud800-\udbff]$/.test(out))
+  // A pair that fits entirely is kept.
+  assert.equal(clipTopicName("a".repeat(126) + "😀" + "tail"), "a".repeat(126) + "😀")
+})
+
+test("editForumTopic / createForumTopic send the clipped name", async () => {
+  const { f, t } = make()
+  await t.closeTopic("7", "a".repeat(126) + "😀😀")
+  assert.ok((f.calls[0].body.name as string).length <= 128)
+  assert.ok(!/[\ud800-\udbff]$/.test(f.calls[0].body.name as string))
+})
