@@ -5,6 +5,31 @@ All notable changes to `@freewaretools/outercom`.
 This project adheres to [Semantic Versioning](https://semver.org/). While the
 major version is `0`, breaking changes ship in minor releases.
 
+## [0.6.0] — 2026-09-22
+
+### Changed
+
+- **Finished chats are marked by renaming the Telegram topic, not by locking it.**
+  Telegram makes a *closed* topic read-only for anyone who isn't a group admin,
+  so support agents who weren't admins could neither see nor answer a returning
+  visitor's chat, while admins saw it reopened fine. Closing a chat now prefixes
+  the topic name with `✅ ` and leaves the topic open; a returning visitor
+  restores the plain name. Because topics are shared per visitor email, this also
+  stops one finished session from locking the topic under another live one.
+  - `TelegramConfig.closeStyle: "lock"` restores the old behaviour;
+    `closedPrefix` changes the marker.
+  - Topics already locked by an earlier version are unlocked on the visitor's
+    next return (the reopen path still calls `reopenForumTopic`), so no migration
+    is needed.
+  - Behaviour change, hence a minor bump: a `^0.5.x` range won't pick it up.
+
+### Added
+
+- `ChatTransport.closeTopic` / `reopenTopic` take an optional topic `name`
+  (Telegram can't read a topic's name back, so the engine supplies it).
+  Existing transports that ignore the argument keep working.
+- `TelegramConfig.fetch` — inject a `fetch` (tests, proxies).
+
 ## [0.5.2] — 2026-07-28
 
 ### Fixed

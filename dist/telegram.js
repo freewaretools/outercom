@@ -20,6 +20,11 @@ export function isThreadGone(err) {
         return false;
     return /message thread not found|TOPIC_DELETED/i.test(err.description);
 }
+/** Renaming a topic to the name it already has — harmless, not a failure. */
+function isNotModified(err) {
+    return err instanceof TelegramApiError && /TOPIC_NOT_MODIFIED/i.test(err.description);
+}
+const DEFAULT_CLOSED_PREFIX = "✅ ";
 /**
  * Telegram transport. v1 of chatkit's "human handoff" surface — designed
  * behind a thin interface so other transports (Slack, Discord, email) can be
@@ -33,7 +38,7 @@ export class TelegramTransport {
         this.cfg = cfg;
     }
     async call(method, body) {
-        const res = await fetch(`https://api.telegram.org/bot${this.cfg.botToken}/${method}`, {
+        const res = await (this.cfg.fetch ?? fetch)(`https://api.telegram.org/bot${this.cfg.botToken}/${method}`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ chat_id: this.cfg.chatId, ...body }),
@@ -70,30 +75,73 @@ export class TelegramTransport {
             return { ok: false };
         }
     }
-    /** Close a topic when a conversation ends (keeps the group tidy). */
-    async closeTopic(threadId) {
+    /**
+     * Mark a topic finished. In the default `"rename"` mode the topic is renamed
+     * with a prefix and stays open (see {@link TelegramConfig.closeStyle}); Telegram
+     * can't read a topic's name back, so `name` must be supplied — without it there
+     * is nothing to rename and the call is a no-op.
+     */
+    async closeTopic(threadId, name) {
+        if (this.cfg.closeStyle === "lock") {
+            try {
+                await this.call("closeForumTopic", { message_thread_id: Number(threadId) });
+            }
+            catch (err) {
+                console.error("[chatkit] telegram closeForumTopic failed:", err);
+            }
+            return;
+        }
+        if (name === undefined)
+            return;
+        const prefix = this.cfg.closedPrefix ?? DEFAULT_CLOSED_PREFIX;
         try {
-            await this.call("closeForumTopic", { message_thread_id: Number(threadId) });
+            await this.editName(threadId, prefix + name);
         }
         catch (err) {
-            console.error("[chatkit] telegram closeForumTopic failed:", err);
+            if (!isNotModified(err)) {
+                console.error("[chatkit] telegram editForumTopic (close) failed:", err);
+            }
         }
     }
     /**
-     * Reopen a closed topic (so a returning visitor reuses the same thread).
+     * Reopen a finished topic (so a returning visitor reuses the same thread).
      * Returns false only if the topic has been deleted, so the caller knows to
      * create a new one instead of writing into a thread that no longer exists.
+     *
+     * In `"rename"` mode this also calls `reopenForumTopic` first: topics locked by
+     * an older version (or by hand) are unlocked on the visitor's next return, so
+     * switching modes needs no migration.
      */
-    async reopenTopic(threadId) {
+    async reopenTopic(threadId, name) {
         try {
             await this.call("reopenForumTopic", { message_thread_id: Number(threadId) });
-            return true;
         }
         catch (err) {
             // Already open (TOPIC_NOT_MODIFIED) and transient errors both mean the
             // topic is still there; only a deleted one warrants a replacement.
-            return !isThreadGone(err);
+            if (isThreadGone(err))
+                return false;
         }
+        if (this.cfg.closeStyle === "lock" || name === undefined)
+            return true;
+        try {
+            await this.editName(threadId, name);
+        }
+        catch (err) {
+            if (isThreadGone(err))
+                return false;
+            if (!isNotModified(err)) {
+                console.error("[chatkit] telegram editForumTopic (reopen) failed:", err);
+            }
+        }
+        return true;
+    }
+    async editName(threadId, name) {
+        // Telegram truncates topic names at 128 chars.
+        await this.call("editForumTopic", {
+            message_thread_id: Number(threadId),
+            name: name.slice(0, 128),
+        });
     }
     /**
      * Parse an inbound webhook update into an agent reply, or `null` if it isn't

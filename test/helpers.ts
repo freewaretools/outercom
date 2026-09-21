@@ -25,9 +25,15 @@ export class FakeTransport implements ChatTransport {
     return { ok: true }
   }
 
-  async closeTopic(): Promise<void> {}
+  readonly closed: Array<{ threadId: string; name?: string }> = []
+  readonly reopened: Array<{ threadId: string; name?: string }> = []
 
-  async reopenTopic(threadId: string): Promise<boolean> {
+  async closeTopic(threadId: string, name?: string): Promise<void> {
+    this.closed.push({ threadId, name })
+  }
+
+  async reopenTopic(threadId: string, name?: string): Promise<boolean> {
+    this.reopened.push({ threadId, name })
     return !this.dead.has(threadId)
   }
 

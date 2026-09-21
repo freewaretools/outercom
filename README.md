@@ -124,6 +124,8 @@ A local model keeps all chat data on your own infrastructure with no per-token c
    curl "https://api.telegram.org/bot<TOKEN>/setWebhook?url=https://yoursite/api/chat/telegram&secret_token=<SECRET>"
    ```
 
+Finished chats are marked by renaming the topic (`✅ Name · email`) rather than closing it, because Telegram makes closed topics read-only for non-admin members. Set `closeStyle: "lock"` on `TelegramTransport` if you'd rather lock them and your agents are all group admins.
+
 ## Extending: Slack (or anything)
 
 Implement `ChatTransport` and pass it to the engine — no engine changes:

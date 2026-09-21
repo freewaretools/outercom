@@ -29,15 +29,21 @@ export interface ChatTransport {
      * rather than throwing.
      */
     sendMessage(threadId: string, text: string): Promise<SendResult>;
-    /** Close/archive a thread when the conversation ends. */
-    closeTopic(threadId: string): Promise<void>;
+    /**
+     * Mark a thread finished when the conversation ends. `name` is the thread's
+     * display name, for transports that signal "closed" by renaming rather than
+     * locking (Telegram can't read a topic's current name back, so it must be
+     * supplied). Best-effort.
+     */
+    closeTopic(threadId: string, name?: string): Promise<void>;
     /**
      * Reopen a previously closed thread. Returns false only when the thread is
      * *gone* (deleted upstream), so the caller can mint a replacement. Return
      * true when it reopened, was already open, or the backend has no such concept
-     * — anything else would spawn duplicate threads on transient errors.
+     * — anything else would spawn duplicate threads on transient errors. `name` is
+     * the thread's plain display name, used to undo a "closed" rename.
      */
-    reopenTopic(threadId: string): Promise<boolean>;
+    reopenTopic(threadId: string, name?: string): Promise<boolean>;
     /** Parse an inbound webhook payload into an agent reply, or null if irrelevant. */
     parseUpdate(update: unknown): ParsedAgentReply | null;
 }

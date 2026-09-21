@@ -54,7 +54,8 @@ export class ChatEngine {
         // Only an explicit `false` means the topic is gone. A transport that predates
         // the boolean return (or can't tell) yields undefined and is treated as
         // alive — assuming otherwise would recreate a topic on every return visit.
-        if (threadId !== null && (await this.transport.reopenTopic(threadId)) === false) {
+        if (threadId !== null &&
+            (await this.transport.reopenTopic(threadId, this.topicName(visitor))) === false) {
             // The remembered topic has been deleted — fall through and mint a new one
             // rather than stranding this chat on a dead thread.
             threadId = null;
@@ -235,7 +236,7 @@ export class ChatEngine {
         { revive: false });
         await this.storage.updateSession(sessionId, { status: "closed" });
         if (session.threadId != null) {
-            await this.transport.closeTopic(session.threadId);
+            await this.transport.closeTopic(session.threadId, this.topicName(session.visitor));
         }
     }
     async closeSession(sessionId) {
@@ -258,7 +259,7 @@ export class ChatEngine {
             }
         }
         if (session.threadId != null) {
-            await this.transport.closeTopic(session.threadId);
+            await this.transport.closeTopic(session.threadId, this.topicName(session.visitor));
         }
     }
     // --- internals -----------------------------------------------------------
