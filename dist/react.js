@@ -8,6 +8,41 @@ import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-run
  * app and point `apiBase` at the routes created with `chatkit/next`.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+/**
+ * The widget's notification sound: a soft two-tone "boop" on a running
+ * AudioContext. Exported so a host can play the same sound for its own
+ * prompts (e.g. a teaser card) instead of copying it. Browsers only start an
+ * AudioContext after the visitor has interacted with the page, so check
+ * `ctx.state === "running"` first.
+ */
+export function playBoop(ctx) {
+    const now = ctx.currentTime;
+    [660, 880].forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = "sine";
+        osc.frequency.value = freq;
+        const t = now + i * 0.11;
+        gain.gain.setValueAtTime(0.0001, t);
+        gain.gain.exponentialRampToValueAtTime(0.14, t + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.11);
+        osc.connect(gain).connect(ctx.destination);
+        osc.start(t);
+        osc.stop(t + 0.12);
+    });
+}
+/**
+ * Whether the visitor muted notifications in the chat panel. Pass the same
+ * `storageKey` the widget uses (default "chatkit:session").
+ */
+export function isChatMuted(storageKey = "chatkit:session") {
+    try {
+        return localStorage.getItem(`${storageKey}:muted`) === "1";
+    }
+    catch {
+        return false;
+    }
+}
 export function ChatWidget({ apiBase = "/api/chat", title: titleProp = "Chat with us", subtitle: subtitleProp = "We typically reply in a few minutes", greeting: greetingProp, accentColor: accentColorProp = "#0f172a", launcherLabel: launcherLabelProp = "Live Chat", launcherVariant = "accent", aiLabel: aiLabelProp = "Assistant", position: positionProp = "bottom-right", pollIntervalMs = 4000, storageKey = "chatkit:session", configUrl, visitor: visitorProp, hideLauncher = false, open: controlledOpen, onOpenChange, onUnreadChange, }) {
     // When configUrl is set, stay hidden until the runtime config says enabled.
     const [enabled, setEnabled] = useState(!configUrl);
@@ -82,7 +117,7 @@ export function ChatWidget({ apiBase = "/api/chat", title: titleProp = "Chat wit
         });
     }
     // Soft two-tone "boop" via Web Audio — no asset to bundle.
-    function playBoop() {
+    function boop() {
         try {
             const Ctx = window.AudioContext ||
                 window.webkitAudioContext;
@@ -93,20 +128,7 @@ export function ChatWidget({ apiBase = "/api/chat", title: titleProp = "Chat wit
             const ctx = audioCtxRef.current;
             if (ctx.state === "suspended")
                 void ctx.resume();
-            const now = ctx.currentTime;
-            [660, 880].forEach((freq, i) => {
-                const osc = ctx.createOscillator();
-                const gain = ctx.createGain();
-                osc.type = "sine";
-                osc.frequency.value = freq;
-                const t = now + i * 0.11;
-                gain.gain.setValueAtTime(0.0001, t);
-                gain.gain.exponentialRampToValueAtTime(0.14, t + 0.02);
-                gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.11);
-                osc.connect(gain).connect(ctx.destination);
-                osc.start(t);
-                osc.stop(t + 0.12);
-            });
+            playBoop(ctx);
         }
         catch {
             /* audio unavailable — ignore */
@@ -181,7 +203,7 @@ export function ChatWidget({ apiBase = "/api/chat", title: titleProp = "Chat wit
         setMessages((prev) => [...prev, ...fresh].sort((a, b) => a.createdAt - b.createdAt));
         if (notify && gotIncoming) {
             if (!mutedRef.current)
-                playBoop();
+                boop();
             if (!openRef.current)
                 setUnread(true);
         }

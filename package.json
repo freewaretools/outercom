@@ -1,6 +1,6 @@
 {
   "name": "@freewaretools/outercom",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "description": "Self-hosted live-chat widget that hands off to Telegram (Slack/Discord pluggable), with an optional Claude or local-LLM first-line. Pre-chat capture, topic-per-customer, transcript email, notification sounds.",
   "license": "MIT",
   "publishConfig": {
