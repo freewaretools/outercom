@@ -5,6 +5,16 @@ All notable changes to `@freewaretools/outercom`.
 This project adheres to [Semantic Versioning](https://semver.org/). While the
 major version is `0`, breaking changes ship in minor releases.
 
+## [0.7.0] — 2026-10-22
+
+### Added
+
+- **`playBoop(ctx)` and `isChatMuted(storageKey?)` are exported from
+  `@freewaretools/outercom/react`.** A host can play the widget's notification
+  sound for its own prompts (such as a teaser card) and respect the visitor's
+  mute choice, instead of copying the sound and the mute key. The widget itself
+  behaves as before.
+
 ## [0.6.1] — 2026-09-22
 
 Fixes found in an adversarial review of 0.6.0's rename-instead-of-close change.

@@ -48,4 +48,17 @@ export interface ChatWidgetProps {
      */
     onUnreadChange?: (unread: boolean) => void;
 }
+/**
+ * The widget's notification sound: a soft two-tone "boop" on a running
+ * AudioContext. Exported so a host can play the same sound for its own
+ * prompts (e.g. a teaser card) instead of copying it. Browsers only start an
+ * AudioContext after the visitor has interacted with the page, so check
+ * `ctx.state === "running"` first.
+ */
+export declare function playBoop(ctx: AudioContext): void;
+/**
+ * Whether the visitor muted notifications in the chat panel. Pass the same
+ * `storageKey` the widget uses (default "chatkit:session").
+ */
+export declare function isChatMuted(storageKey?: string): boolean;
 export declare function ChatWidget({ apiBase, title: titleProp, subtitle: subtitleProp, greeting: greetingProp, accentColor: accentColorProp, launcherLabel: launcherLabelProp, launcherVariant, aiLabel: aiLabelProp, position: positionProp, pollIntervalMs, storageKey, configUrl, visitor: visitorProp, hideLauncher, open: controlledOpen, onOpenChange, onUnreadChange, }: ChatWidgetProps): import("react").JSX.Element | null;
