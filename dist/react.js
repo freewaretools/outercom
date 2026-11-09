@@ -43,7 +43,7 @@ export function isChatMuted(storageKey = "chatkit:session") {
         return false;
     }
 }
-export function ChatWidget({ apiBase = "/api/chat", title: titleProp = "Chat with us", subtitle: subtitleProp = "We typically reply in a few minutes", greeting: greetingProp, accentColor: accentColorProp = "#0f172a", launcherLabel: launcherLabelProp = "Live Chat", launcherVariant = "accent", aiLabel: aiLabelProp = "Assistant", position: positionProp = "bottom-right", pollIntervalMs = 4000, storageKey = "chatkit:session", configUrl, visitor: visitorProp, hideLauncher = false, open: controlledOpen, onOpenChange, onUnreadChange, }) {
+export function ChatWidget({ apiBase = "/api/chat", title: titleProp = "Chat with us", subtitle: subtitleProp = "We typically reply in a few minutes", greeting: greetingProp, accentColor: accentColorProp = "#0f172a", launcherLabel: launcherLabelProp = "Live Chat", launcherVariant = "accent", aiLabel: aiLabelProp = "Assistant", position: positionProp = "bottom-right", pollIntervalMs = 4000, storageKey = "chatkit:session", configUrl, visitor: visitorProp, hideLauncher = false, open: controlledOpen, onOpenChange, onUnreadChange, onChatStarted, }) {
     // When configUrl is set, stay hidden until the runtime config says enabled.
     const [enabled, setEnabled] = useState(!configUrl);
     // Theming/config overrides fetched at runtime from configUrl (take precedence over props).
@@ -270,6 +270,12 @@ export function ChatWidget({ apiBase = "/api/chat", title: titleProp = "Chat wit
                 mergeMessages([localMessage(data.sessionId, "visitor", v.topic)]);
             }
             setPhase("chat");
+            try {
+                onChatStarted?.({ sessionId: data.sessionId });
+            }
+            catch {
+                /* a host callback must never break the chat */
+            }
         }
         catch {
             setError("Could not start the chat. Please try again.");

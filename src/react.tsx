@@ -56,6 +56,14 @@ export interface ChatWidgetProps {
    * elsewhere — e.g. on a menu item — when the launcher is hidden.
    */
   onUnreadChange?: (unread: boolean) => void
+  /**
+   * Called once when a NEW chat starts: after the visitor has submitted the
+   * pre-chat form (or a known `visitor` auto-started) and the server has
+   * created the session. Not called when a prior session is resumed from
+   * localStorage, so a returning visitor isn't counted twice. Carries no
+   * name/email, so a host can forward it to analytics without PII.
+   */
+  onChatStarted?: (info: { sessionId: string }) => void
 }
 
 interface StoredSession {
@@ -119,6 +127,7 @@ export function ChatWidget({
   open: controlledOpen,
   onOpenChange,
   onUnreadChange,
+  onChatStarted,
 }: ChatWidgetProps) {
   // When configUrl is set, stay hidden until the runtime config says enabled.
   const [enabled, setEnabled] = useState<boolean>(!configUrl)
@@ -357,6 +366,11 @@ export function ChatWidget({
         mergeMessages([localMessage(data.sessionId, "visitor", v.topic)])
       }
       setPhase("chat")
+      try {
+        onChatStarted?.({ sessionId: data.sessionId })
+      } catch {
+        /* a host callback must never break the chat */
+      }
     } catch {
       setError("Could not start the chat. Please try again.")
     } finally {

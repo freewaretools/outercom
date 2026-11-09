@@ -5,6 +5,16 @@ All notable changes to `@freewaretools/outercom`.
 This project adheres to [Semantic Versioning](https://semver.org/). While the
 major version is `0`, breaking changes ship in minor releases.
 
+## [0.8.0] — 2026-11-10
+
+### Added
+
+- **`onChatStarted({ sessionId })` on `ChatWidget`.** Fires once when a new chat
+  starts, after the visitor has submitted the pre-chat form and the server has
+  created the session. Not fired when a session is resumed from localStorage.
+  Lets a host record a "chat started" analytics event or conversion without
+  the visitor's name or email.
+
 ## [0.7.0] — 2026-10-22
 
 ### Added

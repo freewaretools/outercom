@@ -47,6 +47,16 @@ export interface ChatWidgetProps {
      * elsewhere — e.g. on a menu item — when the launcher is hidden.
      */
     onUnreadChange?: (unread: boolean) => void;
+    /**
+     * Called once when a NEW chat starts: after the visitor has submitted the
+     * pre-chat form (or a known `visitor` auto-started) and the server has
+     * created the session. Not called when a prior session is resumed from
+     * localStorage, so a returning visitor isn't counted twice. Carries no
+     * name/email, so a host can forward it to analytics without PII.
+     */
+    onChatStarted?: (info: {
+        sessionId: string;
+    }) => void;
 }
 /**
  * The widget's notification sound: a soft two-tone "boop" on a running
@@ -61,4 +71,4 @@ export declare function playBoop(ctx: AudioContext): void;
  * `storageKey` the widget uses (default "chatkit:session").
  */
 export declare function isChatMuted(storageKey?: string): boolean;
-export declare function ChatWidget({ apiBase, title: titleProp, subtitle: subtitleProp, greeting: greetingProp, accentColor: accentColorProp, launcherLabel: launcherLabelProp, launcherVariant, aiLabel: aiLabelProp, position: positionProp, pollIntervalMs, storageKey, configUrl, visitor: visitorProp, hideLauncher, open: controlledOpen, onOpenChange, onUnreadChange, }: ChatWidgetProps): import("react").JSX.Element | null;
+export declare function ChatWidget({ apiBase, title: titleProp, subtitle: subtitleProp, greeting: greetingProp, accentColor: accentColorProp, launcherLabel: launcherLabelProp, launcherVariant, aiLabel: aiLabelProp, position: positionProp, pollIntervalMs, storageKey, configUrl, visitor: visitorProp, hideLauncher, open: controlledOpen, onOpenChange, onUnreadChange, onChatStarted, }: ChatWidgetProps): import("react").JSX.Element | null;
